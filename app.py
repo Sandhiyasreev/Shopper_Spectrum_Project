@@ -1,81 +1,61 @@
 import streamlit as st
 import pandas as pd
 import pickle
-from src.segment import preprocess_data, segment_customer
-import joblib
-import numpy as np
+from src.clustering import segment_customer
+from src.recommender import recommend_products, pivot_table, similarity_matrix
 
-# Load trained models
-@st.cache_resource
-def load_model_and_scaler():
-    try:
-        with open("models/rfm_model.pkl", "rb") as f:
-            model = pickle.load(f)
-        with open("models/rfm_scaler.pkl", "rb") as f:
-            scaler = pickle.load(f)
-        return model, scaler
-    except FileNotFoundError:
-        st.error("❌ Model files not found in the 'models' directory.")
-        return None, None
+# Load the trained KMeans model
+kmeans_model = pickle.load(open("models/kmeans_model.pkl", "rb"))
 
-model, scaler = load_model_and_scaler()
+# Load the customer-item matrix for product recommendation
+customer_item_matrix = pickle.load(open("models/customer_item_matrix.pkl", "rb"))
 
-st.title("🛍️ Shopper Spectrum: Customer Segmentation App")
+# Define segment labels manually (based on your cluster analysis)
+segment_map = {
+    0: "Occasional Shoppers",
+    1: "Loyal Customers",
+    2: "Big Spenders",
+    3: "Recent Low Spenders"
+    # Modify if your model has a different number of clusters
+}
 
-st.markdown("Enter customer data to predict their segment based on RFM analysis.")
+# Set Streamlit page title
+st.title("🛍️ Shopper Spectrum: Customer Segmentation & Product Recommendations")
 
-# Input fields
-recency = st.number_input("Recency (days since last purchase)", min_value=0)
-frequency = st.number_input("Frequency (number of purchases)", min_value=0)
-monetary = st.number_input("Monetary Value (total spent)", min_value=0.0)
+# Create two tabs
+tab1, tab2 = st.tabs(["🧮 Customer Segmentation", "📦 Product Recommendation"])
 
-if st.button("Predict Segment"):
-    try:
-        # Load models
-        kmeans = joblib.load("models/rfm_model.pkl")
-        scaler = joblib.load("models/rfm_scaler.pkl")
+# -------- Tab 1: Customer Segmentation --------
+with tab1:
+    st.header("Customer Segmentation")
 
-        # Prepare input and scale
-        user_input = np.array([[recency, frequency, monetary]])
-        user_scaled = scaler.transform(user_input)
+    recency = st.number_input("Recency (days since last purchase)", min_value=0.0, step=1.0)
+    frequency = st.number_input("Frequency (number of purchases)", min_value=0.0, step=1.0)
+    monetary = st.number_input("Monetary (total amount spent)", min_value=0.0, step=1.0)
 
-        # Predict segment
-        segment = kmeans.predict(user_scaled)[0]
+    if st.button("Predict Segment"):
+        try:
+            segment = segment_customer(recency, frequency, monetary, kmeans_model, segment_map)
+            st.success(f"🧾 Customer belongs to Segment: **{segment}**")
+        except Exception as e:
+            st.error(f"⚠️ Error during segmentation: {e}")
 
-        # Define segment labels
-        segment_labels = {
-            0: "⚠️ At-Risk Customers",
-            1: "🛍️ Occasional Buyers",
-            2: "🏆 Loyal Spenders",
-            3: "🧲 New or Potential Customers"
-        }
+# -------- Tab 2: Product Recommendation --------
+with tab2:
+    st.header("Product Recommendation System")
 
-        # Show result
-        st.success(f"The predicted customer segment is: {segment_labels.get(segment, 'Unknown')}")
+    product_name = st.text_input("Enter a product name (e.g., 'WHITE HANGING HEART T-LIGHT HOLDER')")
 
-    except Exception as e:
-        st.error(f"⚠️ Error during prediction: {e}")
-# --- Product Recommendation Section ---
-st.markdown("---")
-st.subheader("🛒 Product Recommendations Based on Similar Customers")
-
-# Load recommender model
-import joblib
-from src.recommender import recommend_products
-
-recommender_model = joblib.load("models/recommender.pkl")
-
-# Dummy past product input (can be made interactive later)
-past_product = st.text_input("Enter a product you purchased recently:", "WHITE HANGING HEART T-LIGHT HOLDER")
-
-if st.button("Get Recommendations"):
-    try:
-        recommendations = recommend_products(recommender_model, past_product)
-        if recommendations:
-            st.success("✅ Recommended Products:")
-            for i, product in enumerate(recommendations, 1):
-                st.markdown(f"{i}. {product}")
+    if st.button("Recommend Similar Products"):
+        if product_name:
+            try:
+                recommendations = recommend_products(product_name, pivot_table, similarity_matrix)
+                st.write("📦 Recommended Products:")
+                for i, prod in enumerate(recommendations, 1):
+                    st.markdown(f"{i}. {prod}")
+            except KeyError:
+                st.error("❌ Product not found. Please try a valid product name from the dataset.")
+            except Exception as e:
+                st.error(f"⚠️ Unexpected error: {e}")
         else:
-            st.warning("⚠️ No similar products found. Try another input.")
-    except Exception as e:
-        st.error(f"⚠️ Error during recommendation: {e}")
+            st.warning("⚠️ Please enter a product name to get recommendations.")
